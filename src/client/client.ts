@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { Platform } from "../types/enums.js";
 import {
   getCurrentAvailableModels,
   getCurrentEndpoint,
@@ -14,6 +13,7 @@ import { assertSafeApiBaseUrl, safeError } from "../utils/security.js";
 import type { AntigravityApiKey, AvailableModelsRaw, DynamicModelInfo } from "../types/types.js";
 import { antigravityEnv, asString, escapeRegExp, isRecord } from "../utils/util.js";
 import { antigravityFetch } from "../utils/http.js";
+import { registerDiscoveredModelEnums, registerModelEnum } from "../models/models.js";
 
 export const DEFAULT_ENDPOINT = "https://daily-cloudcode-pa.googleapis.com";
 export const ENDPOINT_FALLBACKS = [
@@ -60,35 +60,20 @@ export function endpointCandidates(): string[] {
   return explicit ? [assertSafeApiBaseUrl(explicit)] : ENDPOINT_FALLBACKS;
 }
 
-const DEFAULT_ANTIGRAVITY_VERSION = "2.8.0";
-const DEFAULT_ANTIGRAVITY_CL = "963137146";
+const DEFAULT_USER_AGENT =
+  "antigravity/cli/1.1.23 (aidev_client; os_type=linux; arch=amd64; cl=974125021; auth_method=consumer)";
 
-function defaultUserAgent(): string {
-  const version = antigravityEnv("HUB_VERSION") || DEFAULT_ANTIGRAVITY_VERSION;
-  const cl = antigravityEnv("HUB_CL") || DEFAULT_ANTIGRAVITY_CL;
-  const os = antigravityEnv("HUB_OS") || "darwin";
-  const arch = antigravityEnv("HUB_ARCH") || "arm64";
-  return `antigravity/hub/${version} (aidev_client; os_type=${os}; arch=${arch}; cl=${cl})`;
+/** Default User-Agent matching pure Antigravity CLI wire fingerprint. */
+export function defaultUserAgent(): string {
+  return DEFAULT_USER_AGENT;
 }
 
+/** HTTP headers for Antigravity API requests matching CLI wire traffic. */
 export function antigravityHeaders(token: string): Record<string, string> {
-  const platform =
-    process.platform === "darwin"
-      ? Platform.Macos
-      : process.platform === "win32"
-        ? Platform.Windows
-        : Platform.Linux;
   return {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
-    Accept: "text/event-stream",
     "User-Agent": antigravityEnv("USER_AGENT") || defaultUserAgent(),
-    "X-Goog-Api-Client": "google-cloud-sdk vscode_cloudshelleditor/0.1",
-    "Client-Metadata": JSON.stringify({
-      ideType: "ANTIGRAVITY",
-      platform,
-      pluginType: "GEMINI",
-    }),
   };
 }
 
@@ -254,11 +239,16 @@ function dynamicModelFromInfo(modelId: string, info: unknown): DynamicModelInfo 
   const experiments = Array.isArray(info.modelExperiments)
     ? info.modelExperiments.filter((item): item is string => typeof item === "string")
     : undefined;
+  const modelEnum = asString(info.model);
+  if (modelEnum) {
+    registerModelEnum(modelId, modelEnum);
+  }
   return {
     id: modelId,
     experiments,
     apiProvider: asString(info.apiProvider),
     modelProvider: asString(info.modelProvider),
+    model: modelEnum,
   };
 }
 
@@ -336,6 +326,9 @@ async function fetchAvailableRuntimeModelUncached(
       if (!res.ok) continue;
       setLastEndpoint(endpoint);
       const data: unknown = await res.json();
+      if (isRecord(data) && isRecord(data.models)) {
+        registerDiscoveredModelEnums(data.models as Record<string, { model?: unknown }>);
+      }
       const labels = [...new Set(collectModelLabels(data))].slice(0, 16);
       if (labels.length) lastLabels = labels.join(",");
       const found = findDynamicModel(data, requestedRuntimeModel);
@@ -391,13 +384,6 @@ export function clearModelCache(): void {
   modelCache.clear();
 }
 
-function jsonHeaders(token: string): Record<string, string> {
-  return {
-    ...antigravityHeaders(token),
-    Accept: "application/json",
-  };
-}
-
 async function fetchAvailableModelsFromEndpoint(
   endpoint: string,
   token: string,
@@ -407,7 +393,7 @@ async function fetchAvailableModelsFromEndpoint(
   try {
     const res = await antigravityFetch(`${endpoint}/v1internal:fetchAvailableModels`, {
       method: "POST",
-      headers: jsonHeaders(token),
+      headers: antigravityHeaders(token),
       body: JSON.stringify({ project: projectId }),
       signal: catalogSignal(signal),
     });
@@ -457,6 +443,7 @@ export function mergeAvailableModelsResults(
     const data = result.data;
     if (isRecord(data) && isRecord(data.models)) {
       Object.assign(mergedModels, data.models);
+      registerDiscoveredModelEnums(data.models as Record<string, { model?: unknown }>);
     }
     if (isRecord(data) && typeof data.defaultAgentModelId === "string") {
       defaultAgentModelId = data.defaultAgentModelId;
@@ -502,8 +489,6 @@ async function loadCodeAssistUncached(token: string): Promise<string | undefined
   const body = JSON.stringify({
     metadata: {
       ideType: "ANTIGRAVITY",
-      platform: "PLATFORM_UNSPECIFIED",
-      pluginType: "GEMINI",
     },
   });
 

@@ -11,10 +11,13 @@ import {
   parseImageCommandArgs,
 } from "./image/index.js";
 import {
-  loadInitialAntigravityCatalog,
+  applyAntigravityCatalog,
+  discoverAntigravityModels,
+  getCurrentAntigravityCatalog,
   PROVIDER_ID,
   PROVIDER_NAME,
   refreshAntigravityModels,
+  resolvedCatalog,
 } from "./models/index.js";
 import { ANTIGRAVITY_API, streamAntigravity } from "./stream/index.js";
 import {
@@ -77,7 +80,7 @@ export default function (pi: ExtensionAPI): void {
     streamSimple: streamAntigravity,
   });
 
-  const initialCatalog = loadInitialAntigravityCatalog();
+  const initialCatalog = getCurrentAntigravityCatalog();
 
   pi.registerProvider(PROVIDER_ID, {
     name: PROVIDER_NAME,
@@ -109,6 +112,53 @@ export default function (pi: ExtensionAPI): void {
     },
   });
 
+  pi.registerCommand("antigravity.refresh", {
+    description: "Force refresh Antigravity dynamic model catalog",
+    handler: async (_args, ctx) => {
+      const apiKey = await resolveApiKeyFromContext(ctx);
+      if (!apiKey) {
+        emitCommandOutput(
+          ctx,
+          "No Antigravity credentials. Run /login antigravity first.",
+          "warning",
+        );
+        return;
+      }
+      if (ctx.hasUI) ctx.ui.notify("Refreshing Antigravity models…", "info");
+      try {
+        if (typeof ctx.modelRegistry?.refresh === "function") {
+          const result = await ctx.modelRegistry.refresh({
+            force: true,
+            providers: [PROVIDER_ID],
+          });
+          if (result?.errors?.has(PROVIDER_ID)) {
+            throw result.errors.get(PROVIDER_ID)!;
+          }
+        } else {
+          const discovered = await discoverAntigravityModels(apiKey);
+          const next = resolvedCatalog(discovered, getCurrentAntigravityCatalog());
+          if (discovered.models.length > 0) {
+            applyAntigravityCatalog(next);
+          }
+        }
+        const catalog = getCurrentAntigravityCatalog();
+        const count = catalog.models.length;
+        const sample = catalog.models
+          .slice(0, 4)
+          .map((m) => m.name || m.id)
+          .join(", ");
+        emitCommandOutput(
+          ctx,
+          `Antigravity models refreshed (${count} available: ${sample}${count > 4 ? ", …" : ""})`,
+          "info",
+        );
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        emitCommandOutput(ctx, `Antigravity model refresh failed: ${redactSecrets(msg)}`, "error");
+      }
+    },
+  });
+
   pi.registerCommand("antigravity.doctor", {
     description: "Show sanitized Antigravity provider diagnostics",
     handler: async (_args, ctx) => {
@@ -126,7 +176,7 @@ export default function (pi: ExtensionAPI): void {
         `lastError=${d.error ? redactSecrets(d.error) : "none"}`,
         "transport=native-streamSimple",
         "runtimeCli=not-used",
-        "commands=/antigravity.usage /antigravity.models /antigravity.doctor /antigravity.image",
+        "commands=/antigravity.usage /antigravity.models /antigravity.refresh /antigravity.doctor /antigravity.image",
       ];
       emitCommandOutput(ctx, `Antigravity doctor\n${lines.join("\n")}`);
     },
