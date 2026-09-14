@@ -1,4 +1,10 @@
-import type { Api, Context, Model, Tool } from "@earendil-works/pi-ai";
+import {
+  isRetryableAssistantError,
+  type Api,
+  type Context,
+  type Model,
+  type Tool,
+} from "@earendil-works/pi-ai";
 import {
   antigravityHeaders,
   defaultProjectId,
@@ -587,6 +593,91 @@ assert.match(
   friendlyAntigravityError(429, "Individual quota reached. Resets in 1h"),
   /Quota reached/,
 );
+// Issue #49: transient 429 with generic "Resource has been exhausted (e.g. check quota)."
+// must be classified as rate limited with retryable tokens (429, ResourceExhausted) so Pi retries.
+const transient429Error = friendlyAntigravityError(
+  429,
+  JSON.stringify({
+    error: {
+      code: 429,
+      message: "Resource has been exhausted (e.g. check quota).",
+      status: "RESOURCE_EXHAUSTED",
+    },
+  }),
+);
+assert.ok(!/Quota reached/i.test(transient429Error), "transient 429 must not be classified as Quota reached");
+assert.match(transient429Error, /Rate limited by Antigravity \(429 ResourceExhausted\)/);
+assert.match(transient429Error, /retrying automatically/);
+
+// Real quota walls must remain non-retryable Quota reached
+const quotaResetError = friendlyAntigravityError(
+  429,
+  JSON.stringify({ error: { message: "Quota exceeded. Resets in 6 days." } }),
+);
+assert.match(quotaResetError, /Quota reached\. Please wait 6 days\./);
+
+const quotaWeeklyLimitError = friendlyAntigravityError(
+  429,
+  JSON.stringify({ error: { message: "You have exceeded your weekly limit." } }),
+);
+assert.match(quotaWeeklyLimitError, /Quota reached\./);
+assert.ok(!/Rate limited/i.test(quotaWeeklyLimitError));
+
+// Transient throttles and rate limits must be classified as retryable rate limits
+const plainThrottleError = friendlyAntigravityError(429, "Too many requests, slow down.");
+assert.match(plainThrottleError, /Rate limited by Antigravity \(429 ResourceExhausted\)/);
+
+const rateLimitReachedError = friendlyAntigravityError(429, "Rate limit reached, please slow down.");
+assert.match(rateLimitReachedError, /Rate limited by Antigravity \(429 ResourceExhausted\)/);
+assert.ok(!/Quota reached/i.test(rateLimitReachedError));
+
+// Verify compatibility with Pi's retry classifier
+assert.equal(
+  isRetryableAssistantError({
+    role: "assistant",
+    stopReason: "error",
+    errorMessage: transient429Error,
+  } as unknown as Parameters<typeof isRetryableAssistantError>[0]),
+  true,
+  "transient 429 must be retryable by Pi",
+);
+assert.equal(
+  isRetryableAssistantError({
+    role: "assistant",
+    stopReason: "error",
+    errorMessage: quotaResetError,
+  } as unknown as Parameters<typeof isRetryableAssistantError>[0]),
+  false,
+  "quota reset wall must not be retryable by Pi",
+);
+assert.equal(
+  isRetryableAssistantError({
+    role: "assistant",
+    stopReason: "error",
+    errorMessage: quotaWeeklyLimitError,
+  } as unknown as Parameters<typeof isRetryableAssistantError>[0]),
+  false,
+  "quota weekly limit must not be retryable by Pi",
+);
+assert.equal(
+  isRetryableAssistantError({
+    role: "assistant",
+    stopReason: "error",
+    errorMessage: plainThrottleError,
+  } as unknown as Parameters<typeof isRetryableAssistantError>[0]),
+  true,
+  "plain throttle must be retryable by Pi",
+);
+assert.equal(
+  isRetryableAssistantError({
+    role: "assistant",
+    stopReason: "error",
+    errorMessage: rateLimitReachedError,
+  } as unknown as Parameters<typeof isRetryableAssistantError>[0]),
+  true,
+  "rate limit reached must be retryable by Pi",
+);
+
 assert.match(
   friendlyAntigravityError(400, JSON.stringify({ error: { message: "Unknown name anyOf" } })),
   /request format was rejected/i,

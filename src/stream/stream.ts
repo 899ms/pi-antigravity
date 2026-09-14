@@ -934,10 +934,20 @@ export function friendlyAntigravityError(status: number | undefined, text: strin
     if (/Individual quota reached/i.test(msg)) {
       return `Quota reached. Please wait ${wait || "for reset"}. Next: switch models or try again after reset.`;
     }
-    if (/quota/i.test(msg)) {
+    // Google answers a real quota wall with a "Resets in …" hint, but uses generic
+    // RESOURCE_EXHAUSTED ("Resource has been exhausted (e.g. check quota).") for
+    // transient throttling and capacity pressure. Classifying on the word "quota"
+    // alone wrongly marked transient throttling as a hard quota wall, disabling
+    // Pi's automatic retry backoff. Keep real quota walls non-retryable, and
+    // format transient throttling so Pi's retry mechanism engages.
+    const hardLimit =
+      Boolean(wait) ||
+      (!/rate.?limit/i.test(msg) &&
+        /quota exceeded|exceeded your|limit reached|reached your|daily limit/i.test(msg));
+    if (hardLimit) {
       return `Quota reached.${wait ? ` Please wait ${wait}.` : ""} Next: switch models or retry later.`;
     }
-    return `Rate limited by Antigravity. Next: wait a bit and retry.${wait ? ` Reset: ${wait}.` : ""}`;
+    return "Rate limited by Antigravity (429 ResourceExhausted). Next: retrying automatically; if it persists, switch models.";
   }
   if (status === 500) {
     return "Antigravity had an internal server error. Next: retry in a moment or switch models.";
@@ -1383,7 +1393,15 @@ export function streamAntigravity(
             setLastStatus(response.status);
             if (response.ok) break;
             lastText = await response.text();
-            if (response.status === 429 && /Individual quota reached/i.test(lastText)) break;
+            if (
+              response.status === 429 &&
+              (/Individual quota reached/i.test(lastText) ||
+                /Resets? in /i.test(lastText) ||
+                (!/rate.?limit/i.test(lastText) &&
+                  /quota exceeded|exceeded your|daily limit/i.test(lastText)))
+            ) {
+              break;
+            }
             if (![403, 404, 429, 500, 502, 503, 504].includes(response.status)) break;
           }
 
