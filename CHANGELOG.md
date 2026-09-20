@@ -4,10 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-20
+
 ### Added
 
-- **Dynamic model discovery:** The selectable catalog is refreshed from authenticated `fetchAvailableModels` and grouped into public Pi IDs, so newly enabled models can appear without a catalog-only release. Last-known-good cache plus a conservative static seed remain for cold start. Discovery does not add a new cross-generation fallback; existing Gemini rollout remaps are unchanged.
 - **Linked Google accounts:** `/login antigravity` keeps previous accounts in `~/.pi/agent/antigravity-accounts.json`. `/antigravity.accounts` lists, switches, and removes them. A hard quota wall automatically fails over to the next linked account (#47, #58).
+
+### Changed
+
+- **Yarn 4 toolchain:** Development, CI, and publish use Corepack-pinned Yarn 4 instead of Bun. Installs run with lifecycle scripts disabled, lockfile checksum verification, a 3-day npm publish age gate, and `yarn npm audit`. Releases publish with npm provenance.
 
 ### Fixed
 

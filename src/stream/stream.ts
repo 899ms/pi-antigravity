@@ -1155,7 +1155,6 @@ function guardResponseBody(
     if (stallMs <= 0) return;
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => controller.abort(stallError(stallMs)), stallMs);
-    timer.unref?.();
   };
   let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
   const abortBody = () => {

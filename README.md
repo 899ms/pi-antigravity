@@ -190,12 +190,15 @@ Provider requests reuse a keep-alive connection pool when the runtime supports i
 
 ## Development
 
-This repo uses [Bun](https://bun.sh) for install, scripts, and CI. The published extension itself runs on Node (Pi's CLI).
+This repo uses [Yarn 4](https://yarnpkg.com/) via Corepack for install, scripts, and CI. The published extension itself runs on Node (Pi's CLI).
 
 ```bash
-bun install
-bun run check
+corepack enable
+yarn install
+yarn check
 ```
+
+Installs are hardened against common supply-chain attacks: lifecycle scripts are off, lockfile checksums must match the npm registry, and package versions younger than three days are rejected. Do not add a second registry or enable `enableScripts` without a review.
 
 The package declares its Pi extension in `package.json` under `pi.extensions`. See the [Pi package documentation](https://pi.dev/docs/latest/packages) for package installation, manifest, and gallery conventions.
 
